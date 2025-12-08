@@ -24,6 +24,7 @@ metadata = {
     "author": "Vlad Matache",
     "improvements": "Jason van Hamond"
 }
+
 middle_slot = [330, 131, 70]
 origin_slot = [265, 195, 75]
 seed_loc = [329.5, 131.8125, 75]
@@ -123,4 +124,4 @@ def run(protocol: protocol_api.ProtocolContext, locations, curr_tip, curr_well):
     runtimes["end_all"] = time.time()
 
     # Save all times to CSV
-    export_csv("Runtimes/run1.csv")
+    export_csv("Runtimes/run1.csv", runtimes)
