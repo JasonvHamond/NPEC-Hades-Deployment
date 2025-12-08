@@ -1,0 +1,19 @@
+[project]
+name = "npec-hades-deployment"
+version = "0.0.1"
+description = "Package covering data processing, model training and inoculation using the Hades system and Opentrons OT-2 within NPEC"
+authors = [
+    {name = "Borislav Nachev, Vlad Bogdan Narcis Matache, Wesley van Gaalen, Francisco R. Mansilha, Fedor Chursin, Jason van Hamond, Alexi Kehayias"}
+]
+readme = "README.md"
+requires-python = ">=3.10.0, <=3.10.14"
+dependencies = [
+]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry]
+packages = [{ include = "npec_hades_deployment" }]
