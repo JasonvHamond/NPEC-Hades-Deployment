@@ -2,12 +2,12 @@ import os
 import typer
 import tensorflow as tf
 from rich import print
-from pyphenotyper.data.data_processing import padder
-from pyphenotyper.features.features import save_prediction_for_folder
-from pyphenotyper.features.graph import create_timeline_graph
-from pyphenotyper.features.roots_segmentation import measure_folder
-from pyphenotyper.utils.helpers import create_folder
-from pyphenotyper.utils.metrics import iou, f1
+from data.processing import padder
+from inference.features import save_prediction_for_folder
+from inference.graph import create_timeline_graph
+from inference.roots_segmentation import measure_folder
+from utils.helpers import create_folder
+from utils.metrics import iou, f1
 
 # Set the environment variable before importing TensorFlow
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
