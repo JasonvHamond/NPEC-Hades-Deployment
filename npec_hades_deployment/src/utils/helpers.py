@@ -5,7 +5,7 @@ import time
 import cv2
 import numpy as np
 from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn
-from pyphenotyper.utils.logger_config import logger
+from utils.logger_config import logger
 
 
 def create_folder(folder_name: str) -> None:

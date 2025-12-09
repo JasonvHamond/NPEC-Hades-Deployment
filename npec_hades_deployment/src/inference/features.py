@@ -6,10 +6,10 @@ import pandas as pd
 from patchify import unpatchify
 from rich.progress import track
 
-from pyphenotyper.data.data_processing import padder, roi_extraction_coords_direct, patch_image, \
+from data.processing import padder, roi_extraction_coords_direct, patch_image, \
     set_outside_pixels_to_zero
-from pyphenotyper.logger_config import logger
-from pyphenotyper.utils.helpers import load_image, create_folder, structure_folders, load_images_from_folder
+from logger_config import logger
+from utils.helpers import load_image, create_folder, structure_folders, load_images_from_folder
 
 
 def model_predict_image(image_path: str, patch_size: int, model) -> np.ndarray:

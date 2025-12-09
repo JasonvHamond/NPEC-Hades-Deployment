@@ -59,7 +59,7 @@ def main():
     os.makedirs(input_folder, exist_ok=True)
 
     folder_dir = "timeseries"
-    template_path = "pyphenotyper/assets/seeding_template.tif"
+    template_path = "assets/seeding_template.tif"
 
     # Loading models (choice of pre-built models or custom models)
     print("----")
@@ -77,9 +77,9 @@ def main():
         print("[bold red] Alert! [/bold red]The [bold green]pre-trained[/bold green] models will be used!")
         # Load the models
         root_segmentation_model = tf.keras.models.load_model(
-            'pyphenotyper/model_refrence/model_root_14.h5', custom_objects={'f1': f1})
+            'model_refrence/model_root_14.h5', custom_objects={'f1': f1})
         shoot_segmentation_model = tf.keras.models.load_model(
-            'pyphenotyper/model_refrence/model_shoot_10.h5', custom_objects={'f1': f1})
+            'model_refrence/model_shoot_10.h5', custom_objects={'f1': f1})
 
     else:
         print("[bold red]Alert! [/bold red]Your [bold green]own[/bold green] models will be used!")
