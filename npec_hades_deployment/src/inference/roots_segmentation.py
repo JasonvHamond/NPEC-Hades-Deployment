@@ -1450,7 +1450,7 @@ def measure_folder(folder_dir, expected_centers) -> pd.DataFrame:
                             root_mask = f"{path_to_masks}/root_mask_fixed.png"
                             root_mask = cv2.imread(root_mask, 0)
                             image = cv2.imread(f"{folder_dir}/{timeline}/{petri_dish}")
-                            image = cv2.flip(image, 1)
+                            # image = cv2.flip(image, 1)
                             new_image = add_shoot_image_mask(image, shoot_mask)
                             new_image = add_shoot_image_mask(new_image, root_mask)
                             cv2.imwrite(f"{path_to_masks}/image_mask.png", new_image)
@@ -1472,13 +1472,12 @@ def measure_folder(folder_dir, expected_centers) -> pd.DataFrame:
 
                             # Read the root image
                             image = cv2.imread(path_to_petri_dish)
-                            image = cv2.flip(image, 1)
+                            # image = cv2.flip(image, 1)
                             # Convert the image to RGB
                             image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
                             # Perform segmentation and find the primary roots
                             primary_root_segmentation = segmentation_primary(mask_path, expected_centers=expected_centers)
-
                             if primary_root_segmentation is not None:
                                 mask_full_branch, skelton_ob_loc, plant_location, virtual_edges_image = primary_root_segmentation
 

@@ -60,7 +60,10 @@ def load_image(image_path: str, verbose: bool = True) -> np.ndarray:
             image = cv2.cvtColor(image, cv2.COLOR_BGRA2GRAY)
         if verbose:
             logger.info(f"Loaded image with shape: {image.shape}")
-        image = cv2.flip(image, 1)
+        # Change by Jason;
+        # Commented out as this seems to flip the image, and it seems unnecassary to me?
+        # If I notice an issue during actual deployment, I will revert this change.
+        # image = cv2.flip(image, 1)
         return image
 
 

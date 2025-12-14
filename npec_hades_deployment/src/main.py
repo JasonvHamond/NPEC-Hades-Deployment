@@ -17,7 +17,14 @@ app = typer.Typer()
 
 def get_roots_lengths(folder_dir, template_path, name_convention):
     print(" Segmenting roots and measuring lengths...")
-    _ = measure_folder(folder_dir, template_path)
+    expected_centers = [
+        (1000, 550, 1),
+        (1500, 550, 2),
+        (2000, 550, 3),
+        (2500, 550, 4),
+        (3000, 550, 5)
+    ]
+    _ = measure_folder(folder_dir, expected_centers)
     print(" Roots segmented and measured 'successfully'.")
     if name_convention:
         _ = create_timeline_graph(folder_dir)
