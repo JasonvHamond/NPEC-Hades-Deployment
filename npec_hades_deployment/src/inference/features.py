@@ -10,6 +10,7 @@ from data.processing import padder, roi_extraction_coords_direct, patch_image, \
     set_outside_pixels_to_zero
 from logger_config import logger
 from utils.helpers import load_image, create_folder, structure_folders, load_images_from_folder
+from data.postprocessing import remove_noise
 
 
 def model_predict_image(image_path: str, patch_size: int, model) -> np.ndarray:
@@ -42,6 +43,8 @@ def model_predict_image(image_path: str, patch_size: int, model) -> np.ndarray:
     predictions = (predictions > 0.5).astype(np.uint8)
     predictions = set_outside_pixels_to_zero(
         predictions, min_x, max_x, min_y, max_y)
+    # Remove noise in the predictions.
+    predictions = remove_noise(predictions, min_area=50)
     return predictions
 
 def model_predict_image_offset(image_path: str, patch_size: int, model, vertical_offset: int = 0, horizontal_offset: int = 0) -> np.ndarray:
@@ -123,6 +126,9 @@ def model_predict_image_offset(image_path: str, patch_size: int, model, vertical
 
     # Apply ROI masking
     predictions = set_outside_pixels_to_zero(predictions, min_x, max_x, min_y, max_y)
+    
+    # Remove noise in the predictions.
+    predictions = remove_noise(predictions, min_area=50)
 
     return predictions
 
