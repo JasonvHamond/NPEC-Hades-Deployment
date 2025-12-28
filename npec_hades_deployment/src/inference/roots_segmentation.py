@@ -1512,7 +1512,10 @@ def measure_folder(folder_dir, expected_centers) -> pd.DataFrame:
 
                                 # Create a DataFrame to store the measurements
                                 measurement_df = pd.DataFrame(
-                                    columns=["plant", "Primary_length(mm)", "Lateral_length(mm)", "Total_length(mm)",
+                                    columns=["plant",
+                                             "Primary_length(px)", "Primary_length(mm)",
+                                             "Lateral_length(px)", "Lateral_length(mm)",
+                                             "Total_length(px)", "Total_length(mm)",
                                              "Leaf_size(px)", "Lateral_root_count"]
                                 )
 
@@ -1597,12 +1600,23 @@ def measure_folder(folder_dir, expected_centers) -> pd.DataFrame:
                                     # Compute leaf size
                                     leaf_size = int(np.sum(shoot_mask_x > 0))  # number of white pixels
 
-                                    # Update plant measurements
+                                    primary_length = subset_plant_primary["branch-distance"].sum()
+                                    lateral_length = subset_plant_lateral["branch-distance"].sum()
+                                    total_length = primary_length + lateral_length
+
+                                    # Convert to millimeters
+                                    primary_length_mm = apply_conversion_factor(primary_length)
+                                    lateral_length_mm = apply_conversion_factor(lateral_length)
+                                    total_length_mm = apply_conversion_factor(total_length)
+
                                     new_row = {
                                         "plant": x,
                                         "Primary_length(px)": primary_length,
+                                        "Primary_length(mm)": primary_length_mm,
                                         "Lateral_length(px)": lateral_length,
+                                        "Lateral_length(mm)": lateral_length_mm,
                                         "Total_length(px)": total_length,
+                                        "Total_length(mm)": total_length_mm,
                                         "Leaf_size(px)": leaf_size,
                                         "Lateral_root_count": lateral_count
                                     }
@@ -1633,7 +1647,12 @@ def measure_folder(folder_dir, expected_centers) -> pd.DataFrame:
                                 cv2.imwrite(f'{path_to_masks}/image_mask.png', image)
                             else:
                                 measurement_df = pd.DataFrame(
-                                    columns=["plant", "Primary_length(mm)", "Lateral_length(mm)", "Total_length(mm)", "Leaf_size(px)", 'Lateral_root_count'])
+                                    columns=[
+                                        "plant",
+                                        "Primary_length(px)", "Primary_length(mm)",
+                                        "Lateral_length(px)", "Lateral_length(mm)",
+                                        "Total_length(px)", "Total_length(mm)",
+                                        "Leaf_size(px)", 'Lateral_root_count'])
                                 new_row = {"plant": 0, "Primary_length(mm)": 0,
                                            "Lateral_length(mm)": 0, "Total_length(mm)": 0, "Leaf_size(px)": 0, 'Lateral_root_count':0}
                                 measurement_df.loc[len(measurement_df)] = new_row

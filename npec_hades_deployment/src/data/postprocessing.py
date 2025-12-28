@@ -18,7 +18,7 @@ def remove_noise(
     2. Filters components by minimum area
     3. Closes the mask to fill small holes
     
-    Authors: Jason van Hamond, 232567@buas.nl
+    Author: Jason van Hamond, 232567@buas.nl
     
     :param mask: Binary mask as numpy array
     :param min_area: Minimum area for connected components
