@@ -239,9 +239,6 @@ def model_fix_occlusion(root_mask: np.ndarray, patch_size: int, model, refinemen
     return predictions
 
 
-
-
-
 def model_create_masks(image_path: str, patch_size: int, segmentation_model, shoot_model,
                        refinement_steps: int = 1, verbose: bool = True):
     """
@@ -411,7 +408,6 @@ def save_prediction_for_folder(input_folder: str, root_segmentation_model,
         if os.path.exists(f'timeseries/{filenames[0].split(".")[0]}/{filenames[0].split(".")[0]}'):
             return
         # Using tqdm to add a progress bar
-
         for i in track(range(len(image_paths)), description=f' Processing images for petri dish - {timeline_folder}:'):
             save_prediction_for_image(image_paths[i], filenames[i], root_segmentation_model,
                                       shoot_segmentation_model, padder, refinement_steps, verbose, timeline_folder)
@@ -483,7 +479,8 @@ def overlay_masks_on_image(input_folder: str) -> None:
 
 
 def get_landmark_data(folder: str) -> pd.DataFrame:
-    """This function takes the landmark positions of all plants in an image and concatenates them into a single dataframe; adds a column with the plant number.
+    """This function takes the landmark positions of all plants in an image and
+    concatenates them into a single dataframe; adds a column with the plant number.
 
     Author: Matache Vlad, 224108@buas.nl
     :return: A dataframe with the landmark positions of all plants in an image and a column with the plant number.

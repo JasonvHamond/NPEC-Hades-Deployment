@@ -1,6 +1,7 @@
 import os
 import typer
 import tensorflow as tf
+import pandas as pd
 from rich import print
 from data.processing import padder
 from inference.features import save_prediction_for_folder
@@ -8,6 +9,8 @@ from inference.graph import create_timeline_graph
 from inference.roots_segmentation import measure_folder
 from utils.helpers import create_folder
 from utils.metrics import iou, f1
+from datetime import datetime
+from inoculation import inoculate
 
 # Set the environment variable before importing TensorFlow
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
@@ -42,11 +45,11 @@ def check_input_folder(populated):
     elif len(os.listdir('input')) == 0:
         print(
             "[bold green] Action Required: [/bold green]The input folder is [bold red]empty[/bold red] please place the input images in the created input folder.")
-        populated = typer.confirm(' Did you add all the image and want to continue?')
+        populated = typer.confirm(' Did you add all the images and want to continue?')
         return check_input_folder(populated)
     else:
         print("[bold green] Action Required: [/bold green]Please place the input images in the created input folder.")
-        populated = typer.confirm(' Did you add all the image and want to continue?')
+        populated = typer.confirm(' Did you add all the images and want to continue?')
         return check_input_folder(populated)
 
 
@@ -111,8 +114,58 @@ def main():
     print("----")
     # Measuring Root Lengths
     get_roots_lengths(folder_dir, template_path, name_convention)
-
     print("[green]Phenotyping Completed Successfully![/green]")
+    for timeline in os.listdir(folder_dir):
+        if timeline == '.DS_Store':
+            continue
+            
+        print(f"Processing timeline: {timeline}")
+        timeline_path = os.path.join(folder_dir, timeline)
+        
+        for petri_dish in os.listdir(timeline_path):
+            if not petri_dish.endswith('.png'):
+                continue
+            
+            # Build path to landmarks file
+            petri_dish_name = petri_dish.replace('.png', '')
+            landmarks_file = os.path.join(timeline_path, petri_dish_name, 'landmarks.xlsx')
+            
+            # Check if landmarks file exists
+            if not os.path.exists(landmarks_file):
+                print(f"[yellow]  No landmarks found for {petri_dish}, skipping...[/yellow]")
+                continue
+            
+            try:
+                # Load landmarks
+                locations_df = pd.read_excel(landmarks_file, index_col=0)
+                
+                # Extract primary root tips
+                primary_tips = locations_df[locations_df["landmark"] == "Primary_root_tip"]
+                
+                if primary_tips.empty:
+                    print(f"[yellow]  No primary root tips found in {petri_dish}, skipping...[/yellow]")
+                    continue
+                
+                # Convert to list of (x, y, z) tuples
+                locations_list = [(float(row.x), float(row.y), 64.6) for _, row in primary_tips.iterrows()]
+                
+                # Generate timestamp for this inoculation
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+                
+                print(f"  Inoculating {petri_dish} with {len(locations_list)} points...")
+                
+                # Run inoculation
+                inoculate.run(locations_list, timestamp)
+                
+                print(f"[green]  Inoculation completed for {petri_dish}[/green]")
+                
+            except Exception as e:
+                print(f"[red] Error inoculating {petri_dish}: {e}[/red]")
+                continue
+    
+    print("----")
+    print("[green]Phenotyping and Inoculation Completed Successfully![/green]")
+
 
 
 if __name__ == "__main__":
