@@ -35,6 +35,43 @@ def get_roots_lengths(folder_dir, template_path, name_convention):
         print("----")
 
 
+def inoculation_process(landmarks_file, petri_dish):
+    """
+    This function handles the inoculation process for a given petri dish based on landmarks.
+
+    Paramters:
+    landmarks_file (str): Path to the Excel file containing landmark data.
+    petri_dish (str): Name of the petri dish being processed.
+    """
+    try:
+        # Load landmarks
+        locations_df = pd.read_excel(landmarks_file, index_col=0)
+        
+        # Extract primary root tips
+        primary_tips = locations_df[locations_df["landmark"] == "Primary_root_tip"]
+        
+        if primary_tips.empty:
+            print(f"[yellow]  No primary root tips found in {petri_dish}, skipping...[/yellow]")
+            return
+        
+        # Convert to list of (x, y, z) tuples
+        locations_list = [(float(row.x), float(row.y), 64.6) for _, row in primary_tips.iterrows()]
+        
+        # Generate timestamp for this inoculation
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        
+        print(f"  Inoculating {petri_dish} with {len(locations_list)} points...")
+        
+        # Run inoculation
+        inoculate.run(locations_list, timestamp)
+        
+        print(f"[green] Inoculation completed for {petri_dish}[/green]")
+        
+    except Exception as e:
+        print(f"[red] Error inoculating {petri_dish}: {e}[/red]")
+        return
+
+
 def check_input_folder(populated):
     working_directory = os.path.dirname(os.path.abspath(__file__))
     input_folder = os.path.join(working_directory, 'input')
@@ -60,6 +97,8 @@ def main():
 
     :param input_path: Path to the input image.
     """
+    ### TEST, REMOVE WHEN DEPLOYED AND REPLACE BY CONFIG ###
+    input_accept = False
 
     # Get the working directory of the script
     working_directory = os.path.dirname(os.path.abspath(__file__))
@@ -78,11 +117,19 @@ def main():
     print(
         "[bold green] Action Required: [/bold green]Please place the input images in this folder!"
     )
-    populated = typer.confirm(' Did you add all the image and want to continue?')
+    # If input is accepted, prompt user, otherwise skip the prompt.
+    if input_accept:
+        populated = typer.confirm(' Did you add all the images and want to continue?')
+    else:
+        populated = True
+
     if check_input_folder(populated):
         print("----")
     print("[bold red] Alert! [/bold red] Let's choose the model for segmentation now:")
-    pre_built_models = typer.confirm(' Do you want to use pre-built models?')
+    if input_accept:
+        pre_built_models = typer.confirm(' Do you want to use pre-built models?')
+    else:
+        pre_built_models = True
     if pre_built_models:
         print("[bold red] Alert! [/bold red]The [bold green]pre-trained[/bold green] models will be used!")
         # Load the models
@@ -106,7 +153,10 @@ def main():
     # Creating Masks
     print("[bold red] Alert! [/bold red]Models loaded 'successfully'.")
     print("----")
-    name_convention = typer.confirm('Do you want to use the default naming convention?')
+    if input_accept:
+        name_convention = typer.confirm('Do you want to use the default naming convention?')
+    else:
+        name_convention = False
     typer.echo(" Creating Masks for the input images...")
     save_prediction_for_folder(input_folder, root_segmentation_model,
                                shoot_segmentation_model, padder, name_convention, verbose=False)
@@ -134,35 +184,8 @@ def main():
             if not os.path.exists(landmarks_file):
                 print(f"[yellow]  No landmarks found for {petri_dish}, skipping...[/yellow]")
                 continue
-            
-            try:
-                # Load landmarks
-                locations_df = pd.read_excel(landmarks_file, index_col=0)
-                
-                # Extract primary root tips
-                primary_tips = locations_df[locations_df["landmark"] == "Primary_root_tip"]
-                
-                if primary_tips.empty:
-                    print(f"[yellow]  No primary root tips found in {petri_dish}, skipping...[/yellow]")
-                    continue
-                
-                # Convert to list of (x, y, z) tuples
-                locations_list = [(float(row.x), float(row.y), 64.6) for _, row in primary_tips.iterrows()]
-                
-                # Generate timestamp for this inoculation
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-                
-                print(f"  Inoculating {petri_dish} with {len(locations_list)} points...")
-                
-                # Run inoculation
-                inoculate.run(locations_list, timestamp)
-                
-                print(f"[green]  Inoculation completed for {petri_dish}[/green]")
-                
-            except Exception as e:
-                print(f"[red] Error inoculating {petri_dish}: {e}[/red]")
-                continue
-    
+            # Run inoculation process
+            inoculation_process(landmarks_file, petri_dish)
     print("----")
     print("[green]Phenotyping and Inoculation Completed Successfully![/green]")
 
