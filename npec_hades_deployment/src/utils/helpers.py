@@ -6,6 +6,8 @@ import cv2
 import numpy as np
 from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn
 from utils.logger_config import logger
+from PIL import Image
+import pillow_jxl
 
 
 def create_folder(folder_name: str) -> None:
@@ -60,11 +62,38 @@ def load_image(image_path: str, verbose: bool = True) -> np.ndarray:
             image = cv2.cvtColor(image, cv2.COLOR_BGRA2GRAY)
         if verbose:
             logger.info(f"Loaded image with shape: {image.shape}")
-        # Change by Jason;
-        # Commented out as this seems to flip the image, and it seems unnecassary to me?
-        # If I notice an issue during actual deployment, I will revert this change.
-        # image = cv2.flip(image, 1)
         return image
+
+
+def load_jxl_image(image_path: str) -> np.ndarray:
+    """
+    Load a JXL image from a given path.
+
+    Author: Jason van Hamond
+
+    Parameters:
+    image_path (str): Path of the JXL image to load.
+
+    Returns:
+    np.ndarray: Loaded image.
+    """
+    # Check if the input type is correct.
+    if check_input_type(image_path) != "str":
+        logger.error(f"Unsupported input type: {check_input_type(image_path)}")
+        raise ValueError(f"Unsupported input type: {check_input_type(image_path)}")
+    else:
+        image = Image.open(image_path)
+        image = np.array(image)
+    # Convert from RGB to BGR if necessary for CV2 compatibility.
+    if len(image.shape) == 3 and image.shape[2] == 3:
+        image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+    else:
+        image =  image
+
+    if len(image.shape) != 2:
+        # Finally convert to grayscale.
+        image = cv2.cvtColor(image, cv2.COLOR_BGRA2GRAY)
+    return image
 
 
 def load_images_from_folder(folder_path: str, verbose: bool = True) -> tuple[list, list]:
@@ -90,9 +119,15 @@ def load_images_from_folder(folder_path: str, verbose: bool = True) -> tuple[lis
                 images.append(image)
                 filenames.append(filename)
                 paths.append(os.path.join(folder_path, filename))
+            elif filename.endswith(".jxl"):
+                image = load_jxl_image(os.path.join(folder_path, filename))
+                images.append(image)
+                filenames.append(filename)
+                paths.append(os.path.join(folder_path, filename))
         if verbose:
-            logger.error(
-                f"Loaded {len(images)} images from folder: {folder_path}")
+            logger.info(
+                f"Loaded {len(images)} images from folder: {folder_path}"
+            )
         return images, filenames, paths
 
 

@@ -1,3 +1,4 @@
+from fileinput import filename
 import os
 
 import cv2
@@ -5,11 +6,13 @@ import numpy as np
 import pandas as pd
 from patchify import unpatchify
 from rich.progress import track
+from PIL import Image
+import pillow_jxl
 
 from data.processing import padder, roi_extraction_coords_direct, patch_image, \
     set_outside_pixels_to_zero
 from logger_config import logger
-from utils.helpers import load_image, create_folder, structure_folders, load_images_from_folder
+from utils.helpers import load_image, create_folder, structure_folders, load_images_from_folder, load_jxl_image
 from data.postprocessing import remove_noise
 
 
@@ -25,9 +28,12 @@ def model_predict_image(image_path: str, patch_size: int, model) -> np.ndarray:
     :param model: Model to use for prediction.
     :return: Predicted mask.
     """
-
-    # Load the image
-    image = load_image(image_path)
+    # Check file extension to ensure correct image loading.
+    if image_path.endswith(".png") or image_path.endswith(".jpg"):
+        # Load image
+        image = load_image(image_path)
+    elif image_path.endswith(".jxl"):
+        image = load_jxl_image(image_path)
     image = padder(image, patch_size)
     # Extracting coordinates for ROI
     min_x, max_x, min_y, max_y = roi_extraction_coords_direct(image)
@@ -63,9 +69,12 @@ def model_predict_image_offset(image_path: str, patch_size: int, model, vertical
     :param horizontal_offset: same but for columns
     :return: Predicted mask.
     """
-
-    # Load the image
-    image = load_image(image_path)
+    # Check file extension to ensure correct image loading.
+    if image_path.endswith(".png") or image_path.endswith(".jpg"):
+        # Load image
+        image = load_image(image_path)
+    elif image_path.endswith(".jxl"):
+        image = load_jxl_image(image_path)
 
     # If vertical_offset > 0, modify the image
     if vertical_offset > 0:
@@ -256,8 +265,12 @@ def model_create_masks(image_path: str, patch_size: int, segmentation_model, sho
     :return: Root and shoot masks + a check for empty masks.
     """
     flag = False
-    # Load the image
-    image = load_image(image_path)
+    # Check file extension to ensure correct image loading.
+    if image_path.endswith(".png") or image_path.endswith(".jpg"):
+        # Load image
+        image = load_image(image_path)
+    elif image_path.endswith(".jxl"):
+        image = load_jxl_image(image_path)
     original_image = image.copy()
     image = padder(image, patch_size)
     difference_x = image.shape[0] - original_image.shape[0]
@@ -337,8 +350,12 @@ def save_prediction_for_image(image_path: str, filename: str, root_segmentation_
     :param shoot_segmentation_model: Pre-loaded shoot segmentation model.
     :param padder: Function to pad images to the required size.
     """
-    # Load image
-    image = load_image(image_path)
+    # Check file extension to ensure correct image loading.
+    if filename.endswith(".png") or filename.endswith(".jpg"):
+        # Load image
+        image = load_image(image_path)
+    elif filename.endswith(".jxl"):
+        image = load_jxl_image(image_path)
     if verbose:
         logger.info(f"Loaded image: {filename} with shape: {image.shape}")
 
@@ -349,7 +366,7 @@ def save_prediction_for_image(image_path: str, filename: str, root_segmentation_
 
     fixed_root_mask = root_mask + occlusion_mask
     full_plant_mask = fixed_root_mask + shoot_mask
-    folder_name = timeline_folder + "/" + filename.replace('.png', '')
+    folder_name = timeline_folder + "/" + filename.rsplit('.', 1)[0]
     create_folder(f"timeseries/{folder_name}")
     # Save the root mask
     cv2.imwrite(f"timeseries/{folder_name}/root_mask.png", root_mask * 255)
@@ -382,9 +399,14 @@ def save_prediction_for_image(image_path: str, filename: str, root_segmentation_
 
 
 
-def save_prediction_for_folder(input_folder: str, root_segmentation_model,
-                               shoot_segmentation_model, padder, name_convention, refinement_steps: int = 1,
-                               verbose: bool = True) -> None:
+def save_prediction_for_folder(
+        input_folder: str, root_segmentation_model,
+        shoot_segmentation_model,
+        padder,
+        name_convention,
+        refinement_steps: int = 1,
+        verbose: bool = True
+    ) -> None:
     """
     Saves predictions from root and shoot segmentation models for each image in the specified input folder.
 
@@ -408,7 +430,10 @@ def save_prediction_for_folder(input_folder: str, root_segmentation_model,
         if os.path.exists(f'timeseries/{filenames[0].split(".")[0]}/{filenames[0].split(".")[0]}'):
             return
         # Using tqdm to add a progress bar
-        for i in track(range(len(image_paths)), description=f' Processing images for petri dish - {timeline_folder}:'):
+        for i in track(
+            range(len(image_paths)),
+            description=f' Processing images for petri dish - {timeline_folder}:'
+        ):
             save_prediction_for_image(image_paths[i], filenames[i], root_segmentation_model,
                                       shoot_segmentation_model, padder, refinement_steps, verbose, timeline_folder)
 
@@ -444,8 +469,12 @@ def overlay_masks_on_image(input_folder: str) -> None:
                     occlusion_mask_path = os.path.join(folder_path, file)
 
             if original_image_path and root_mask_path and shoot_mask_path and occlusion_mask_path:
-                # Load the original image
-                original_image = load_image(original_image_path)
+                # Check file extension to ensure correct image loading.
+                if original_image_path.endswith(".png") or original_image_path.endswith(".jpg"):
+                    # Load image
+                    original_image = load_image(original_image_path)
+                elif original_image_path.endswith(".jxl"):
+                    original_image = load_jxl_image(original_image_path)
                 original_colored = cv2.cvtColor(
                     original_image, cv2.COLOR_GRAY2BGR)  # Convert to BGR for overlay
 

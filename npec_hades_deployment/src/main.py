@@ -113,7 +113,8 @@ def main():
     # Loading models (choice of pre-built models or custom models)
     print("----")
     print(
-        "[bold red] Alert! [/bold red]A folder called 'input' has been created in the current directory.")
+        "[bold red] Alert! [/bold red]A folder called 'input' has been created in the current directory."
+    )
     print(
         "[bold green] Action Required: [/bold green]Please place the input images in this folder!"
     )

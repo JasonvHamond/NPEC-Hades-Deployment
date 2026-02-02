@@ -1,4 +1,5 @@
 #
+from tkinter import Image
 import numpy as np
 import math
 import matplotlib
@@ -24,6 +25,8 @@ from typing import Dict
 from skimage.morphology import disk
 from skimage.util import img_as_bool
 from scipy.ndimage import convolve
+from PIL import Image
+import pillow_jxl
 
 import matplotlib
 matplotlib.use('TkAgg')
@@ -1442,9 +1445,14 @@ def measure_folder(folder_dir, expected_centers) -> pd.DataFrame:
                 # Loop through all the petri dishes in each timeline
                 for petri_dish in track(os.listdir(f"{folder_dir}/{timeline}"),
                                         description=f' Segmenting and Measuring plants for petri dish - {timeline}'):
-                    if petri_dish.endswith(".png"):
-                        if "flagged.txt" in os.listdir(f"{folder_dir}/{timeline}/{petri_dish[:-4]}"):
-                            path_to_masks = f"{folder_dir}/{timeline}/{petri_dish[:-4]}"
+                    if petri_dish.endswith((".png", ".jxl")):
+                        path_to_masks = f"{folder_dir}/{timeline}/{petri_dish[:-4]}"
+                        print(path_to_masks)
+                        # # Skip if already processed
+                        # if os.path.exists(f"{path_to_masks}/measurements.xlsx"):
+                        #     continue
+
+                        if ("flagged.txt" in os.listdir(f"{folder_dir}/{timeline}/{petri_dish[:-4]}")):
                             shoot_mask = f"{path_to_masks}/shoot_mask.png"
                             shoot_mask = cv2.imread(shoot_mask, 0)
                             root_mask = f"{path_to_masks}/root_mask_fixed.png"
@@ -1456,8 +1464,8 @@ def measure_folder(folder_dir, expected_centers) -> pd.DataFrame:
                             cv2.imwrite(f"{path_to_masks}/image_mask.png", new_image)
 
                     try:
-                        # Check if the file is a png file
-                        if petri_dish.endswith(".png") and not os.path.isfile(f"{folder_dir}/{timeline}/{timeline}/flagged.txt"):
+                        # Check if the file is a png or jxl file
+                        if petri_dish.endswith((".png", ".jxl")) and not os.path.isfile(f"{folder_dir}/{timeline}/{timeline}/flagged.txt"):
                             # Get the path to the petri dish
                             path_to_petri_dish = f"{folder_dir}/{timeline}/{petri_dish}"
                             # Get the path to the root masks
@@ -1469,24 +1477,29 @@ def measure_folder(folder_dir, expected_centers) -> pd.DataFrame:
                                     mask_path = f"{path_to_masks}/{mask}"
                                 elif mask.endswith("shoot_mask.png"):
                                     shoot_mask_path = f"{path_to_masks}/{mask}"
+                            if petri_dish.endswith(".jxl"):
+                                # Read the petri dish image.
+                                image = Image.open(path_to_petri_dish)
+                                image = np.array(image)
 
-                            # Read the root image
-                            image = cv2.imread(path_to_petri_dish)
-                            # image = cv2.flip(image, 1)
-                            # Convert the image to RGB
-                            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                                if len(image.shape) == 3 and image.shape[2] == 4:
+                                    image = image[:, :, :3]
+
+                            else:
+                                # Read the root image
+                                image = cv2.imread(path_to_petri_dish)
+                                # Convert the image to RGB
+                                image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
                             # Perform segmentation and find the primary roots
                             primary_root_segmentation = segmentation_primary(mask_path, expected_centers=expected_centers)
                             if primary_root_segmentation is not None:
                                 mask_full_branch, skelton_ob_loc, plant_location, virtual_edges_image = primary_root_segmentation
-
                                 # Draw the primary roots on the image
                                 for index, row in mask_full_branch.iterrows():
                                     if row["root_type"] == "Primary":
                                         yx = skelton_ob_loc.path_coordinates(index)
                                         image = draw_root(yx, image, 0, 0, (0, 0, 255))
-
                                 # Find the lateral roots
                                 mask_full_branch.to_csv("branch_loc.csv", index=False)
                                 # get_lateral recolor the image according to the lateral roots
@@ -1657,7 +1670,8 @@ def measure_folder(folder_dir, expected_centers) -> pd.DataFrame:
                                            "Lateral_length(mm)": 0, "Total_length(mm)": 0, "Leaf_size(px)": 0, 'Lateral_root_count':0}
                                 measurement_df.loc[len(measurement_df)] = new_row
                                 measurement_df.to_excel(f'{path_to_masks}/measurements.xlsx')
-                    except:
+                    except Exception as e:
+                        print(f"Error processing plant: {e}")
                         measurement_df = pd.DataFrame(
                             columns=["plant", "Primary_length(mm)", "Lateral_length(mm)", "Total_length(mm)", "Leaf_size(px)", 'Lateral_root_count'])
                         new_row = {"plant": 0, "Primary_length(mm)": 0,
