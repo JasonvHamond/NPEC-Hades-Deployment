@@ -32,6 +32,7 @@ import matplotlib
 matplotlib.use('TkAgg')
 #sys.path.append("C:/Users/phyto/Documents/NPEC Arabidopsis Hades Pipeline")  # Path to the folder containing pyphenotyper
 import inference.rsml as rsml
+# from inference.timeseries_consistency import flag_inconsistencies, get_plant_mask
 
 expected_centers = [
     (1000, 550, 1),
@@ -1678,3 +1679,369 @@ def measure_folder(folder_dir, expected_centers) -> pd.DataFrame:
                                    "Lateral_length(mm)": 0, "Total_length(mm)": 0, "Leaf_size(px)": 0, 'Lateral_root_count':0}
                         measurement_df.loc[len(measurement_df)] = new_row
                         measurement_df.to_excel(f'{path_to_masks}/measurements.xlsx')
+
+
+#### MOVE TO ANOTHER FILE LATER
+def save_measurements(mask_full_branch, skelton_ob_loc, plant_location, image, path_to_masks, expected_centers):
+    # Draw primary roots on image.
+    for index, row in mask_full_branch.iterrows():
+        if row["root_type"] == "Primary":
+            yx = skelton_ob_loc.path_coordinates(index)
+            image = draw_root(yx, image, 0, 0, (0, 0, 255))
+
+    mask_full_branch.to_csv("branch_loc.csv", index=False)
+    image, mask_full_branch = get_lateral(mask_full_branch, skelton_ob_loc, image, plant_location)
+    mask_full_branch["plant"] = mask_full_branch["plant"].apply(increment_if_numeric)
+    mask_full_branch.loc[mask_full_branch['root_type'] == 'Primary', 'root_id'] = 'Primary'
+
+    shoot_mask = cv2.imread(f"{path_to_masks}/shoot_mask.png")
+    new_shoot_mask = find_shoot(shoot_mask, expected_centers=expected_centers)
+    for ind_shoot in new_shoot_mask:
+        ind_shoot = ind_shoot.astype(bool)
+        image[ind_shoot] = (0, 100, 0)
+
+    cv2.imwrite(f'{path_to_masks}/image_mask.png', image)
+    rsml.get_rsml(mask_full_branch, skelton_ob_loc, f"{path_to_masks}/root_structure.rsml")
+
+    measurement_df = pd.DataFrame(columns=[
+        "plant", "Primary_length(px)", "Primary_length(mm)",
+        "Lateral_length(px)", "Lateral_length(mm)",
+        "Total_length(px)", "Total_length(mm)",
+        "Leaf_size(px)", "Lateral_root_count"
+    ])
+    global_landmark_df = pd.DataFrame()
+    mask_full_branch = mask_full_branch[mask_full_branch["plant"] != "None"]
+
+    for x in mask_full_branch["plant"].unique():
+        if math.isnan(x):
+            continue
+        img_mask = np.zeros_like(image)
+        landmarked_img = image.copy()
+        plant_df = pd.DataFrame(columns=["plant", "Primary_length(px)", "Lateral_length(px)", "Total_length(px)", "Leaf_size(px)", "Lateral_root_count"])
+        os.makedirs(f"{path_to_masks}/plant_{x}", exist_ok=True)
+
+        subset_plant = mask_full_branch[mask_full_branch["plant"] == x]
+        mask_full_branch.loc[subset_plant.index, "connected_to_main_root"] = False
+        subset_plant.to_excel(f'{path_to_masks}/plant_{x}/plant_data.xlsx')
+
+        subset_plant_primary = subset_plant[subset_plant["root_type"] == "Primary"]
+        subset_plant_lateral = subset_plant[subset_plant["root_type"] == "Lateral"]
+        primary_length = subset_plant_primary["branch-distance"].sum()
+        lateral_length = subset_plant_lateral["branch-distance"].sum()
+        total_length = primary_length + lateral_length
+
+        main_root_nodes = set()
+        for idx in subset_plant_primary.index:
+            main_root_nodes.update(map(tuple, skelton_ob_loc.path_coordinates(idx)))
+        lateral_count = 0
+        for idx in subset_plant_lateral.index:
+            path_nodes = set(map(tuple, skelton_ob_loc.path_coordinates(idx)))
+            if path_nodes & main_root_nodes:
+                lateral_count += 1
+                mask_full_branch.loc[idx, "connected_to_main_root"] = True
+
+        for index, row in subset_plant.iterrows():
+            yx = skelton_ob_loc.path_coordinates(index)
+            img_mask = draw_root(yx, img_mask, 0, 0, (255, 255, 255))
+
+        cv2.imwrite(f'{path_to_masks}/plant_{x}/root_mask.png', img_mask)
+
+        primary_mask = np.zeros_like(img_mask[:, :, 0])
+        lateral_mask = np.zeros_like(img_mask[:, :, 0])
+        for index, row in subset_plant.iterrows():
+            yx = skelton_ob_loc.path_coordinates(index)
+            if row["root_type"] == "Primary":
+                primary_mask = draw_root(yx, primary_mask, 0, 0, 255)
+            elif row["root_type"] == "Lateral":
+                lateral_mask = draw_root(yx, lateral_mask, 0, 0, 255)
+
+        cv2.imwrite(f'{path_to_masks}/plant_{x}/main_root_mask.png', primary_mask)
+        cv2.imwrite(f'{path_to_masks}/plant_{x}/lateral_root_mask.png', lateral_mask)
+
+        fused_mask = primary_mask.copy()
+        fused_mask[lateral_mask == 255] = 255
+        fused_tips = get_root_tips(fused_mask)
+        lateral_tips = get_root_tips(lateral_mask)
+        node_mask = np.where((fused_tips == 0) & (lateral_tips == 255), 255, 0).astype(np.uint8)
+        cv2.imwrite(f'{path_to_masks}/plant_{x}/tip_mask.png', fused_tips)
+        cv2.imwrite(f'{path_to_masks}/plant_{x}/node_mask.png', node_mask)
+
+        if 0 <= (x - 1) < len(new_shoot_mask):
+            shoot_mask_x = new_shoot_mask[x - 1] * 255
+            shoot_root_mask = merge_shoot_root(shoot_mask_x, img_mask)
+            image = add_shoot_image_mask(image, shoot_mask_x)
+            cv2.imwrite(f'{path_to_masks}/plant_{x}/shoot_mask.png', shoot_mask_x)
+            cv2.imwrite(f'{path_to_masks}/plant_{x}/shoot_root_mask.png', shoot_root_mask)
+        else:
+            shoot_mask_x = np.zeros_like(img_mask[:, :, 0])
+
+        leaf_size = int(np.sum(shoot_mask_x > 0))
+        primary_length_mm = apply_conversion_factor(primary_length)
+        lateral_length_mm = apply_conversion_factor(lateral_length)
+        total_length_mm = apply_conversion_factor(total_length)
+
+        new_row = {
+            "plant": x,
+            "Primary_length(px)": primary_length,
+            "Primary_length(mm)": primary_length_mm,
+            "Lateral_length(px)": lateral_length,
+            "Lateral_length(mm)": lateral_length_mm,
+            "Total_length(px)": total_length,
+            "Total_length(mm)": total_length_mm,
+            "Leaf_size(px)": leaf_size,
+            "Lateral_root_count": lateral_count
+        }
+
+        plant_df.loc[len(plant_df)] = new_row
+        plant_df.to_excel(f'{path_to_masks}/plant_{x}/plant_measurements.xlsx')
+        measurement_df.loc[len(measurement_df)] = new_row
+
+        subset_plant_clean = subset_plant.drop(columns=["connected_to_main_root"], errors="ignore").copy()
+        landmark_df = get_landmarks(subset_plant_clean)
+        landmarked_img = draw_landmarks(landmarked_img, landmark_df)
+        subset_plant_primary.to_excel(f'{path_to_masks}/plant_{x}/primary_measurements.xlsx')
+        cv2.imwrite(f'{path_to_masks}/plant_{x}/landmarked_image.png', landmarked_img)
+        landmark_df[["landmark", "y", "x", "root_id"]].to_excel(f'{path_to_masks}/plant_{x}/landmarks.xlsx')
+        landmark_df["plant"] = x
+        global_landmark_df = pd.concat([global_landmark_df, landmark_df[["landmark", "plant", "root_id", "y", "x"]]], ignore_index=True)
+
+    measurement_df.to_excel(f'{path_to_masks}/measurements.xlsx')
+    global_landmark_df = global_landmark_df[global_landmark_df["root_id"] == "Primary"]
+    global_landmark_df[["landmark", "plant", "x", "y"]].sort_values(by="plant").to_excel(f'{path_to_masks}/landmarks.xlsx')
+    cv2.imwrite(f'{path_to_masks}/image_mask.png', image)
+
+def build_biased_graph_timeseries(
+    branch_df,
+    skeleton,
+    head_length=50,
+    angle_penalty=50.0,
+    crop_padding=500,
+    forbid_upward=True,
+    upward_tolerance=10,
+    upward_penalty=3.0
+):
+    """
+    Build a graph from branch_df with edge costs that are biased towards vertical downward paths.
+
+    Parameters:
+        branch_df (pd.DataFrame)
+            DataFrame with node-id-src, node-id-dst, image-coord-src-0, image-coord-src-1,
+            image-coord-dst-0, image-coord-dst-1 columns.
+        skeleton (np.ndarray)
+            Binary skeleton image corresponding to the branch_df.
+        head_length (int)
+            Number of pixels from the source node to consider for angle calculation.
+        angle_penalty (float)
+            Multiplier for the angle-based cost penalty.
+        crop_padding (int)
+            Number of pixels to pad around the source coordinates.
+        forbid_upward (bool)
+            If True, forbids upward paths.
+    Returns:
+        nx.DiGraph: The resulting graph with biased edge costs.
+    """
+    G = nx.DiGraph()
+    # Loop through the branches.
+    for _, row in branch_df.iterrows():
+        # Select required values from the row.
+        src, dst = row["node-id-src"], row["node-id-dst"]
+        y0, x0 = int(row["image-coord-src-0"]), int(row["image-coord-src-1"])
+        y1, x1 = int(row["image-coord-dst-0"]), int(row["image-coord-dst-1"])
+        G.add_node(src)
+        G.add_node(dst)
+        # Select crop area.
+        ym0 = max(0, min(y0, y1) - crop_padding)
+        ym1 = min(skeleton.shape[0], max(y0, y1) + crop_padding)
+        xm0 = max(0, min(x0, x1) - crop_padding)
+        xm1 = min(skeleton.shape[1], max(x0, x1) + crop_padding)
+
+        sub = skeleton[ym0:ym1, xm0:xm1]
+        try:
+            # Calculate the path based on angle.
+            path, _ = skimage.graph.route_through_array(
+                1 - sub, (y0 - ym0, x0 - xm0), (y1 - ym0, x1 - xm0),
+                fully_connected=True)
+            if len(path) < 2:
+                continue
+            head = path[:min(head_length, len(path))]
+            dy = head[-1][0] - head[0][0]
+            dx = head[-1][1] - head[0][1]
+            length = math.hypot(dx, dy)
+            if (
+                length == 0
+                or forbid_upward
+                and dy < -upward_tolerance
+            ):
+                continue
+            # Calculate angle penalty and add edge to graph.
+            angle_deg = math.degrees(math.acos(np.clip(dy / length, -1, 1)))
+            cost = angle_penalty * (angle_deg / 180.0)
+            G.add_edge(src, dst, cost=cost, dy=dy, dx=dx, angle_deg=angle_deg, length=length)
+        except Exception:
+            continue
+
+    return G
+
+def add_virtual_edges(G, coord_map, max_dist):
+    """
+    Add virtual edges between nearby skeleton tips in the graph.
+
+    Parameters:
+        G (nx.Graph)
+            Graph with nodes corresponding to skeleton points.
+        coord_map (dict)
+            Mapping from node ID to (y, x) coordinates.
+        max_dist (float)
+            Maximum distance to connect tips with virtual edges.
+    """
+    # Find connected components and label them.
+    components = list(nx.connected_components(G.to_undirected()))
+    label_map = {n: i for i, comp in enumerate(components) for n in comp}
+    tips_by_label = {}
+    # loop through nodes.
+    for node in G.nodes:
+        # Check if node is a tip with a degree below or equal to 2.
+        if G.degree(node) <= 2 and node in coord_map:
+            # Add node to the corresponding label group.
+            tips_by_label.setdefault(label_map[node], []).append(node)
+    # Loop through tips and labels to find near tips.
+    for l1, l2 in combinations(tips_by_label.keys(), 2):
+        # Calculate best distance.
+        best_dist, best_pair = np.inf, (None, None)
+        for t1 in tips_by_label[l1]:
+            for t2 in tips_by_label[l2]:
+                d = np.linalg.norm(np.array(coord_map[t1]) - np.array(coord_map[t2]))
+                if d < best_dist:
+                    best_dist, best_pair = d, (t1, t2)
+        # Skip if the best distance is greater than limited.
+        if best_dist > max_dist:
+            continue
+        t1, t2 = best_pair
+        y1, y2 = coord_map[t1][0], coord_map[t2][0]
+        src, dst = (t1, t2) if y1 < y2 else (t2, t1)
+        if not G.has_edge(src, dst):
+            G.add_edge(src, dst, cost=best_dist, virtual=True)
+
+
+def select_best_path_timeseries(G, start_node, coord_map, min_dy_ratio=0.8, target_tip_y=None):
+    if start_node not in G:
+        return []
+    try:
+        _, paths = nx.single_source_dijkstra(G, start_node, weight="cost")
+    except nx.NetworkXNoPath:
+        return []
+
+    candidates = []
+    for node, path in paths.items():
+        if node == start_node or len(path) < 2:
+            continue
+        if len(path) != len(set(path)):
+            continue
+        coords = [coord_map[n] for n in path if n in coord_map]
+        if len(coords) < 2:
+            continue
+        dy = coords[-1][0] - coords[0][0]
+        if dy <= 0:
+            continue
+
+        angle_dev = cumulative_angle(coords)
+
+        # How close does this path get to the target tip
+        tip_y = coords[-1][0]
+        tip_score = abs(tip_y - target_tip_y) if target_tip_y is not None else 0
+
+        candidates.append({
+            "path": path,
+            "dy": dy,
+            "angle_dev": angle_dev,
+            "tip_score": tip_score
+        })
+
+    if not candidates:
+        return []
+    max_dy = max(c["dy"] for c in candidates)
+    top = [c for c in candidates if c["dy"] >= max_dy * min_dy_ratio]
+
+    if target_tip_y is not None:
+        # Among long enough paths, prefer ones closest to target tip y
+        # then break ties with angle deviation
+        return min(top, key=lambda c: (c["tip_score"], c["angle_dev"]))["path"]
+    else:
+        return min(top, key=lambda c: c["angle_dev"])["path"]
+
+def get_closest(branch_df, row, threshold=45):
+    """
+    Get the closest branch to the given row based on proximity and angle.
+
+    Parameters:
+        branch_df (pd.DataFrame)
+            DataFrame with node-id-src, node-id-dst, image-coord-src-0, image-coord-src-1,
+            image-coord-dst-0, image-coord-dst-1, and root_type columns.
+        row (pd.Series)
+            A row from branch_df representing the current branch to compare against.
+        threshold (float)
+            Maximum distance to consider for a branch to be a candidate.
+
+    Returns:
+        pd.Series or None
+            The closest branch as a Series, or None if no suitable candidate is found.
+    """
+    # Extract coordinates and angle from the input row.
+    px, py, angle = row["image-coord-dst-1"], row["image-coord-dst-0"], row["angle"]
+    dist = np.sqrt(
+        (branch_df["coord-src-1"] - px) ** 2 +
+        (branch_df["coord-src-0"] - py) ** 2
+    )
+    # Select candidates.
+    candidates = branch_df[
+        (dist <= threshold) &
+        (branch_df["node-id-src"] != row["node-id-src"]) &
+        (branch_df["node-id-dst"] != row["node-id-dst"]) &
+        (branch_df["root_type"] != "Primary")
+    ]
+    if candidates.empty:
+        return None
+    # Return the candidate with the closest angle.
+    return candidates.iloc[(candidates["angle"] - angle).abs().argsort()[:1]].iloc[0]
+
+
+def follow_lateral_path(branch_df):
+    """
+    Follow paths from primary roots to assign lateral roots based on proximity and angle.
+
+    Parameters:
+        branch_df (pd.DataFrame)
+            DataFrame with "node-id-src", "node-id-dst", "image-coord-src-0", "image-coord-src-1",
+
+    Returns:
+        pd.DataFrame
+            Updated branch_df with lateral roots assigned.
+    """
+    # Loop through assigned plants and follow paths to assign laterals.
+    assigned = branch_df[branch_df["plant"] != "None"]
+    # Loop through plants.
+    for plant in sorted(assigned["plant"].unique()):
+        if plant == "None" or (isinstance(plant, float) and np.isnan(plant)):
+            continue
+        plant = int(plant)
+        primary_rows = branch_df[
+            (branch_df["plant"] == plant) &
+            (branch_df["root_type"] == "Primary")
+        ]
+        root_id = 0
+        # Loop through primary rows.
+        for _, row in primary_rows.iterrows():
+            steps, following = 0, True
+            # follow the paths.
+            while following:
+                closest = get_closest(branch_df, row if steps == 0 else closest)
+                if closest is None or steps > 10:
+                    break
+                idx = closest.name
+                branch_df.at[idx, "plant"] = plant
+                branch_df.at[idx, "root_type"] = "Lateral"
+                branch_df.at[idx, "root_id"] = f"Lateral_{root_id}"
+                closest = branch_df.loc[idx]
+                steps += 1
+            root_id += 1
+    return branch_df

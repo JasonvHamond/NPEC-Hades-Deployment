@@ -7,6 +7,8 @@ from data.processing import padder
 from inference.features import save_prediction_for_folder
 from inference.graph import create_timeline_graph
 from inference.roots_segmentation import measure_folder
+from inference.inference import predict_timeseries
+from inference.timeseries_consistency import flag_inconsistencies
 from utils.helpers import create_folder
 from utils.metrics import iou, f1
 from datetime import datetime
@@ -159,34 +161,42 @@ def main():
     else:
         name_convention = False
     typer.echo(" Creating Masks for the input images...")
-    save_prediction_for_folder(input_folder, root_segmentation_model,
-                               shoot_segmentation_model, padder, name_convention, verbose=False)
-    typer.echo(" Masks created 'successfully'.")
-    print("----")
-    # Measuring Root Lengths
-    get_roots_lengths(folder_dir, template_path, name_convention)
+    for item in os.listdir(input_folder):
+        item_path = os.path.join(input_folder, item)
+        if os.path.isdir(item_path) and item.startswith("timeseries_"):
+            typer.echo(f" Processing timeseries: {item}...")
+            coords_per_plant1 = {plant_idx: [] for plant_idx in range(5)}
+            predictions = predict_timeseries(item_path, 256, root_segmentation_model, shoot_segmentation_model)
+            flag_inconsistencies(predictions, coords_per_plant1, min_similarity=0.8)
+        else:
+            save_prediction_for_folder(input_folder, root_segmentation_model,
+                                    shoot_segmentation_model, padder, name_convention, verbose=False)
+            typer.echo(" Masks created 'successfully'.")
+            print("----")
+            # Measuring Root Lengths
+            get_roots_lengths(folder_dir, template_path, name_convention)
     print("[green]Phenotyping Completed Successfully![/green]")
-    for timeline in os.listdir(folder_dir):
-        if timeline == '.DS_Store':
-            continue
+    # for timeline in os.listdir(folder_dir):
+    #     if timeline == '.DS_Store':
+    #         continue
             
-        print(f"Processing timeline: {timeline}")
-        timeline_path = os.path.join(folder_dir, timeline)
+    #     print(f"Processing timeline: {timeline}")
+    #     timeline_path = os.path.join(folder_dir, timeline)
         
-        for petri_dish in os.listdir(timeline_path):
-            if not petri_dish.endswith('.png'):
-                continue
+    #     for petri_dish in os.listdir(timeline_path):
+    #         if not petri_dish.endswith('.png'):
+    #             continue
             
-            # Build path to landmarks file
-            petri_dish_name = petri_dish.replace('.png', '')
-            landmarks_file = os.path.join(timeline_path, petri_dish_name, 'landmarks.xlsx')
+    #         # Build path to landmarks file
+    #         petri_dish_name = petri_dish.replace('.png', '')
+    #         landmarks_file = os.path.join(timeline_path, petri_dish_name, 'landmarks.xlsx')
             
-            # Check if landmarks file exists
-            if not os.path.exists(landmarks_file):
-                print(f"[yellow]  No landmarks found for {petri_dish}, skipping...[/yellow]")
-                continue
-            # Run inoculation process
-            inoculation_process(landmarks_file, petri_dish)
+    #         # Check if landmarks file exists
+    #         if not os.path.exists(landmarks_file):
+    #             print(f"[yellow]  No landmarks found for {petri_dish}, skipping...[/yellow]")
+    #             continue
+    #         # Run inoculation process
+    #         inoculation_process(landmarks_file, petri_dish)
     print("----")
     print("[green]Phenotyping and Inoculation Completed Successfully![/green]")
 
