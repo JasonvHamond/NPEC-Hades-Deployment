@@ -7,7 +7,9 @@ from patchify import unpatchify
 import re
 from tqdm import tqdm
 import warnings
+import cv2
 import inference.roots_segmentation as post
+from inference.timeseries_correction import get_primary_coords
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", message=".*separator in column name.*")
@@ -51,7 +53,7 @@ def extract_all_numbers(filename: str) -> tuple:
     return tuple(int(n) for n in numbers) if numbers else (0,)
 
 
-def predict_timeseries(folder_path: str, patch_size: int, root_model, shoot_model):
+def predict_timeseries(folder_path: str, output_path: str, patch_size: int, root_model, shoot_model):
     """
     """
     image_files = sorted(
@@ -75,6 +77,12 @@ def predict_timeseries(folder_path: str, patch_size: int, root_model, shoot_mode
     for t, filename in enumerate(tqdm(image_files, desc="Predicting mask")):
         image_path = os.path.join(folder_path, filename)
         results[filename] = {}
+        stem = filename.rsplit(".", 1)[0]
+        mask_dir = os.path.join(output_path, stem)
+        os.makedirs(mask_dir, exist_ok=True)
+        root_mask_path = os.path.join(mask_dir, "root_mask_fixed.png")
+        shoot_mask_path = os.path.join(mask_dir, "shoot_mask.png")
+
         try:
             root_mask = model_predict(
                 image_path,
@@ -86,17 +94,27 @@ def predict_timeseries(folder_path: str, patch_size: int, root_model, shoot_mode
                 patch_size,
                 shoot_model
             )
+            # Save the predictions to files.
+            cv2.imwrite(root_mask_path, root_mask)
+            cv2.imwrite(shoot_mask_path, shoot_mask)
+
             # Save the predictions in the dictionaries.
             results[filename]["roots"] = root_mask
             results[filename]["shoots"] = shoot_mask
 
             # Segment and select primary/lateral roots.
-            branch_df, skeleton_ob, plant_bboxes = post.segment_roots(
-                root_mask, expected_centers,
-                reconnect_max_dist=40.0,
-                known_start_coords=start_coords_per_plant if t >= MIN_RELIABLE_T else None
-            )
-            if branch_df is not None:
+            # branch_df, skeleton_ob, plant_bboxes = post.segment_roots(
+            #     root_mask, expected_centers,
+            #     reconnect_max_dist=40.0,
+            #     known_start_coords=start_coords_per_plant if t >= MIN_RELIABLE_T else None
+            # )
+            primary_result = post.segmentation_primary(root_mask_path, expected_centers=expected_centers)
+
+
+            # if branch_df is not None:
+            if primary_result is not None:
+                branch_df, skeleton_ob, plant_bboxes, virtual_edges_image = primary_result
+                
                 for plant_idx in range(5):
                     primary = branch_df[
                         (branch_df["plant"] == plant_idx) &
@@ -117,22 +135,60 @@ def predict_timeseries(folder_path: str, patch_size: int, root_model, shoot_mode
                         current = start_coords_per_plant[plant_idx]
                         if current is None or new_coord[0] < current[0]:
                             start_coords_per_plant[plant_idx] = new_coord
+                dummy_image = np.zeros((*root_mask.shape, 3), dtype=np.uint8)
+                _, branch_df = post.get_lateral(branch_df, skeleton_ob, dummy_image, plant_bboxes)
+                branch_df["plant"] = branch_df["plant"].apply(post.increment_if_numeric)
+                branch_df.loc[branch_df["root_type"] == "Primary", "root_id"] = "Primary"
 
-            # branch_df, skeleton_ob, plant_bboxes = post.segment_roots(root_mask, expected_centers, reconnect_max_dist=40.0)
-            primary_mask, lateral_mask = post.get_masks(branch_df, skeleton_ob, root_mask.shape)
-            results[filename]["lateral"] = lateral_mask
-            results[filename]["primary"] = primary_mask
-            results[filename]["bboxes"] = plant_bboxes
-            results[filename]["branches"] = branch_df
-            results[filename]["skeleton"] = skeleton_ob
+                primary_mask = np.zeros(root_mask.shape, dtype=np.uint8)
+                lateral_mask = np.zeros(root_mask.shape, dtype=np.uint8)
+
+                for index, row in branch_df.iterrows():
+                    yx = skeleton_ob.path_coordinates(index)
+                    if row["root_type"] == "Primary":
+                        primary_mask = post.draw_root(yx, primary_mask, 0, 0, 255)
+                    elif row["root_type"] == "Lateral":
+                        lateral_mask = post.draw_root(yx, lateral_mask, 0, 0, 255)
+
+                # branch_df, skeleton_ob, plant_bboxes = post.segment_roots(root_mask, expected_centers, reconnect_max_dist=40.0)
+                # primary_mask, lateral_mask = post.get_masks(branch_df, skeleton_ob, root_mask.shape)
+                results[filename]["lateral"] = lateral_mask
+                results[filename]["primary"] = primary_mask
+                results[filename]["bboxes"] = plant_bboxes
+                results[filename]["branches"] = branch_df
+                results[filename]["skeleton"] = skeleton_ob
+            else:
+                results[filename].update({
+                    "lateral": None, "primary": None,
+                    "bboxes": None, "branches": None, "skeleton": None
+                })
 
         except Exception as e:
             print(f"Failed to predict for {filename}: {e}")
-            results[filename]["roots"] = None
-            results[filename]["shoots"] = None
-            results[filename]["lateral"] = None
-            results[filename]["primary"] = None
-            results[filename]["bboxes"] = None
-            results[filename]["branches"] = None
-            results[filename]["skeleton"] = None
+            results[filename].update({
+                "lateral": None, "primary": None,
+                "bboxes": None, "branches": None, "skeleton": None
+            })
+
+        # except Exception as e:
+        #     print(f"Failed to predict for {filename}: {e}")
+        #     results[filename]["roots"] = None
+        #     results[filename]["shoots"] = None
+        #     results[filename]["lateral"] = None
+        #     results[filename]["primary"] = None
+        #     results[filename]["bboxes"] = None
+        #     results[filename]["branches"] = None
+        #     results[filename]["skeleton"] = None
     return results
+
+def create_coords_per_plant(predictions):
+    coords_per_plant = {plant_idx: [] for plant_idx in range(5)}
+    for filename in sorted(predictions.keys(), key=extract_all_numbers):
+        data = predictions[filename]
+        branch_df = data["branches"]
+        skeleton_ob = data["skeleton"]
+        for idx in range(5):
+            coords = get_primary_coords(branch_df, skeleton_ob, plant_idx=idx)
+            coords_per_plant[idx].append(coords)
+    return coords_per_plant
+

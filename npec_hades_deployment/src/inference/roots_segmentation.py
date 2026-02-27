@@ -304,6 +304,10 @@ def get_primary_landmarks(landmark_df):
     # Create subset with only primary root branches.
     primary_subset = landmark_df[landmark_df["root_type"] == "Primary"]
 
+    if primary_subset.empty:
+        print(f"Warning: no primary root found in plant subset, skipping primary landmarks.")
+        return landmark_df_copy
+
 
     if len(primary_subset) == 1:
         new_df = primary_subset.copy()
@@ -347,12 +351,16 @@ def get_lateral_landmarks(landmark_df):
     if len(landmark_df) == 0:
         return landmark_df
 
-    
-
     # Make a copy of the dataframe because of SettingWithCopyWarning from pandas
     landmark_df_copy = landmark_df.copy()
     # Create subset with only lateral root branches.
     lateral_subset = landmark_df[landmark_df["root_type"] == "Lateral"]
+    
+    primary_rows = landmark_df[landmark_df["root_type"] == "Primary"]
+    if primary_rows.empty:
+        print("Warning: no primary root found, skipping lateral landmark detection.")
+        return landmark_df_copy
+    
     # Get the primary skeleton id
     primary_skeleton_id = landmark_df[landmark_df["root_type"] == "Primary"]["skeleton-id"].iloc[0]
 
@@ -423,10 +431,14 @@ def get_landmarks(subset_plant):
     :param subset_plant: The dataframe with the root information.
     :return: landmark_df: The processed dataframe with the landmarks.
     """
+    empty_df = pd.DataFrame(columns=["landmark", "y", "x", "root_id", "y_src", "plant"])
     # Create a copy of the dataframe to avoid SettingWithCopyWarning from pandas
     landmark_df = subset_plant.copy()
     # Add a column for the landmarks
     landmark_df["landmark"] = "None"
+    if not (landmark_df["root_type"] == "Primary").any():
+        print("Warning: no primary root in plant, skipping landmark detection.")
+        return empty_df
     # Get the primary landmarks
     landmark_df = get_primary_landmarks(landmark_df)
 
@@ -435,6 +447,10 @@ def get_landmarks(subset_plant):
 
     # Process the landmark dataframe
     landmark_df = process_landmark_df(landmark_df)
+    if landmark_df.empty or "root_id" not in landmark_df.columns:
+        print("Warning: landmark processing returned empty result.")
+        return empty_df
+
 
     return landmark_df
 
@@ -448,6 +464,9 @@ def draw_landmarks(landmarked_img, landmark_df):
     :param landmark_df: The dataframe with the landmarks.
     :return: landmarked_img: The image with the landmarks drawn on it.
     """
+    if landmark_df.empty or "y_src" not in landmark_df.columns:
+        print("Warning: no landmarks to draw, skipping.")
+        return landmarked_img
     # Loop through the rows of the dataframe
     root_id = 0
     primary_junction_root_id = 0
@@ -1683,6 +1702,7 @@ def measure_folder(folder_dir, expected_centers) -> pd.DataFrame:
 
 #### MOVE TO ANOTHER FILE LATER
 def save_measurements(mask_full_branch, skelton_ob_loc, plant_location, image, path_to_masks, expected_centers):
+    global_landmark_df = pd.DataFrame(columns=["landmark", "plant", "root_id", "y", "x"])
     # Draw primary roots on image.
     for index, row in mask_full_branch.iterrows():
         if row["root_type"] == "Primary":
@@ -1691,11 +1711,17 @@ def save_measurements(mask_full_branch, skelton_ob_loc, plant_location, image, p
 
     mask_full_branch.to_csv("branch_loc.csv", index=False)
     image, mask_full_branch = get_lateral(mask_full_branch, skelton_ob_loc, image, plant_location)
-    mask_full_branch["plant"] = mask_full_branch["plant"].apply(increment_if_numeric)
+    # mask_full_branch["plant"] = mask_full_branch["plant"].apply(increment_if_numeric)
     mask_full_branch.loc[mask_full_branch['root_type'] == 'Primary', 'root_id'] = 'Primary'
 
     shoot_mask = cv2.imread(f"{path_to_masks}/shoot_mask.png")
-    new_shoot_mask = find_shoot(shoot_mask, expected_centers=expected_centers)
+    # new_shoot_mask = find_shoot(shoot_mask, expected_centers=expected_centers)
+    if shoot_mask is None:
+        print(f"Warning: shoot_mask.png not found at {path_to_masks}, skipping shoot detection.")
+        new_shoot_mask = [np.zeros(image.shape[:2], dtype=np.uint8)] * 5
+    else:
+        new_shoot_mask = find_shoot(shoot_mask, expected_centers=expected_centers)
+
     for ind_shoot in new_shoot_mask:
         ind_shoot = ind_shoot.astype(bool)
         image[ind_shoot] = (0, 100, 0)
@@ -1709,7 +1735,7 @@ def save_measurements(mask_full_branch, skelton_ob_loc, plant_location, image, p
         "Total_length(px)", "Total_length(mm)",
         "Leaf_size(px)", "Lateral_root_count"
     ])
-    global_landmark_df = pd.DataFrame()
+    # global_landmark_df = pd.DataFrame()
     mask_full_branch = mask_full_branch[mask_full_branch["plant"] != "None"]
 
     for x in mask_full_branch["plant"].unique():
@@ -1798,6 +1824,12 @@ def save_measurements(mask_full_branch, skelton_ob_loc, plant_location, image, p
 
         subset_plant_clean = subset_plant.drop(columns=["connected_to_main_root"], errors="ignore").copy()
         landmark_df = get_landmarks(subset_plant_clean)
+        if landmark_df.empty:
+            print(f"Warning: no landmarks for plant {x}, skipping.")
+            subset_plant_primary.to_excel(os.path.join(path_to_masks, f"plant_{x}", "primary_measurements.xlsx"))
+            cv2.imwrite(os.path.join(path_to_masks, f"plant_{x}", "landmarked_image.png"), landmarked_img)
+            landmark_df.to_excel(os.path.join(path_to_masks, f"plant_{x}", "landmarks.xlsx"))
+            continue
         landmarked_img = draw_landmarks(landmarked_img, landmark_df)
         subset_plant_primary.to_excel(f'{path_to_masks}/plant_{x}/primary_measurements.xlsx')
         cv2.imwrite(f'{path_to_masks}/plant_{x}/landmarked_image.png', landmarked_img)
@@ -1806,8 +1838,15 @@ def save_measurements(mask_full_branch, skelton_ob_loc, plant_location, image, p
         global_landmark_df = pd.concat([global_landmark_df, landmark_df[["landmark", "plant", "root_id", "y", "x"]]], ignore_index=True)
 
     measurement_df.to_excel(f'{path_to_masks}/measurements.xlsx')
+    # Perform checks for global_landmark_df.
     global_landmark_df = global_landmark_df[global_landmark_df["root_id"] == "Primary"]
-    global_landmark_df[["landmark", "plant", "x", "y"]].sort_values(by="plant").to_excel(f'{path_to_masks}/landmarks.xlsx')
+    if not global_landmark_df.empty:
+        global_landmark_df = global_landmark_df[global_landmark_df["root_id"] == "Primary"]
+        global_landmark_df[["landmark", "plant", "x", "y"]].sort_values(by="plant").to_excel(
+            f'{path_to_masks}/landmarks.xlsx')
+    else:
+        global_landmark_df.to_excel(f'{path_to_masks}/landmarks.xlsx')
+        global_landmark_df[["landmark", "plant", "x", "y"]].sort_values(by="plant").to_excel(f'{path_to_masks}/landmarks.xlsx')
     cv2.imwrite(f'{path_to_masks}/image_mask.png', image)
 
 def build_biased_graph_timeseries(
@@ -1921,6 +1960,30 @@ def add_virtual_edges(G, coord_map, max_dist):
         src, dst = (t1, t2) if y1 < y2 else (t2, t1)
         if not G.has_edge(src, dst):
             G.add_edge(src, dst, cost=best_dist, virtual=True)
+
+
+def cumulative_angle(coords):
+    """
+    Calculate the cumulative angle deviation along a path defined by coordinates.
+
+    Parameters:
+        coords (list of tuples)
+            List of (y, x) coordinates along the path.
+    
+    Returns:
+        float: The cumulative angle deviation in radians.
+    """
+    total = 0
+    # Loop through coordinates.
+    for i in range(1, len(coords) - 1):
+        # Calculate vectors and their norms.
+        v1 = np.array([coords[i][1] - coords[i-1][1], coords[i][0] - coords[i-1][0]])
+        v2 = np.array([coords[i+1][1] - coords[i][1], coords[i+1][0] - coords[i][0]])
+        n1, n2 = np.linalg.norm(v1), np.linalg.norm(v2)
+        if n1 == 0 or n2 == 0:
+            continue
+        total += math.acos(np.clip(np.dot(v1, v2) / (n1 * n2), -1, 1))
+    return total
 
 
 def select_best_path_timeseries(G, start_node, coord_map, min_dy_ratio=0.8, target_tip_y=None):
@@ -2045,3 +2108,33 @@ def follow_lateral_path(branch_df):
                 steps += 1
             root_id += 1
     return branch_df
+
+
+def get_masks(branch_df, skeleton_ob, original_shape, plant_idx=None):
+    """
+    Generate primary and lateral masks from branch assignments.
+
+    Parameters:
+        branch_df: Output from segment_roots.
+        skeleton_ob: skan Skeleton object.
+        original_shape: (h, w) of the original image.
+        plant_idx: If provided, only generate masks for that plant.
+
+    Returns:
+        primary_mask, lateral_mask: Binary numpy arrays.
+    """
+    primary_mask = np.zeros(original_shape, dtype=np.uint8)
+    lateral_mask = np.zeros(original_shape, dtype=np.uint8)
+
+    for idx, row in branch_df.iterrows():
+        if plant_idx is not None and row["plant"] != plant_idx:
+            continue
+        coords = skeleton_ob.path_coordinates(idx)
+        for y, x in coords:
+            if 0 <= y < original_shape[0] and 0 <= x < original_shape[1]:
+                if row["root_type"] == "Primary":
+                    primary_mask[y, x] = 1
+                elif row["root_type"] == "Lateral":
+                    lateral_mask[y, x] = 1
+
+    return primary_mask, lateral_mask

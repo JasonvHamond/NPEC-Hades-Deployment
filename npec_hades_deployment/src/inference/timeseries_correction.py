@@ -381,7 +381,7 @@ def find_consistent_growth_path(
         else:
             # Just run the select best paths function when there are no candidates
             # path = post.select_best_path(G, best_start_node, coord_map)
-            path = post.select_best_path(G, best_start_node, coord_map, target_tip_y=target_tip_y)
+            path = post.select_best_path_timeseries(G, best_start_node, coord_map, target_tip_y=target_tip_y)
 
         # If path calculation is successful, continue with updating.
         if path:
@@ -399,7 +399,7 @@ def find_consistent_growth_path(
                 candidates = root_nodes if root_nodes else all_src
                 # Select the candidate closest to the original start y.
                 best_start = min(candidates, key=lambda n: abs(coord_map[n][0] - orig_start_y) if n in coord_map else 99999)
-                path = post.select_best_path(G, best_start, coord_map, target_tip_y=target_tip_y)
+                path = post.select_best_path_timeseries(G, best_start, coord_map, target_tip_y=target_tip_y)
 
             # Check again if path exists due to possible recalculation.
             if path:

@@ -6,14 +6,17 @@ from rich import print
 from data.processing import padder
 from inference.features import save_prediction_for_folder
 from inference.graph import create_timeline_graph
-from inference.roots_segmentation import measure_folder
-from inference.inference import predict_timeseries
+from inference.roots_segmentation import measure_folder, save_measurements
+from inference.inference import predict_timeseries, create_coords_per_plant
 from inference.timeseries_consistency import flag_inconsistencies
 from utils.helpers import create_folder
 from utils.metrics import iou, f1
 from datetime import datetime
 from inoculation import inoculate
-
+import cv2
+from PIL import Image
+import pillow_jxl
+import numpy as np
 # Set the environment variable before importing TensorFlow
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
@@ -162,12 +165,44 @@ def main():
         name_convention = False
     typer.echo(" Creating Masks for the input images...")
     for item in os.listdir(input_folder):
+        output_path = os.path.join(folder_dir, item)
+        os.makedirs(output_path, exist_ok=True)
         item_path = os.path.join(input_folder, item)
         if os.path.isdir(item_path) and item.startswith("timeseries_"):
+            expected_centers = [
+                (1000, 550, 1),
+                (1500, 550, 2),
+                (2000, 550, 3), 
+                (2500, 550, 4),
+                (3000, 550, 5)
+            ]
             typer.echo(f" Processing timeseries: {item}...")
-            coords_per_plant1 = {plant_idx: [] for plant_idx in range(5)}
-            predictions = predict_timeseries(item_path, 256, root_segmentation_model, shoot_segmentation_model)
-            flag_inconsistencies(predictions, coords_per_plant1, min_similarity=0.8)
+            predictions = predict_timeseries(item_path, output_path, 256, root_segmentation_model, shoot_segmentation_model)
+            coords_per_plant = create_coords_per_plant(predictions)
+            print("Performing consistency checks...")
+            predictions = flag_inconsistencies(predictions, coords_per_plant, min_similarity=0.8)
+            for filename, data in predictions.items():
+                if data["branches"] is None:
+                    continue
+                stem = filename.rsplit(".", 1)[0]
+                mask_dir = os.path.join(output_path, stem)
+                image_path = os.path.join(item_path, filename)
+                # Load the original image
+                image = Image.open(image_path)
+                image = np.array(image)
+                if len(image.shape) == 3 and image.shape[2] == 4:
+                    image = image[:, :, :3]
+                image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                
+                save_measurements(
+                    mask_full_branch=data["branches"],
+                    skelton_ob_loc=data["skeleton"],
+                    plant_location=data["bboxes"],
+                    image=image,
+                    path_to_masks=mask_dir,
+                    expected_centers=expected_centers
+                )
+
         else:
             save_prediction_for_folder(input_folder, root_segmentation_model,
                                     shoot_segmentation_model, padder, name_convention, verbose=False)

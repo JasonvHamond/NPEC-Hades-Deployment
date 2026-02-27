@@ -11,6 +11,7 @@ import pandas as pd
 import skimage
 import cv2
 import math
+import typer
 
 from data import timeseries_processing as tp
 import inference.roots_segmentation as post
@@ -79,11 +80,13 @@ def flag_inconsistencies(
     - predictions_new (dict):
         Updated predictions dictionary with flagged plants corrected if correction is enabled.
     """
+    
     filenames = list(predictions.keys())
     predictions_new = predictions.copy()
 
     for plant_idx, coords_list in coords_per_plant.items():
         filenames = list(predictions.keys())
+        print(f"Checking consistency for Plant {plant_idx} across {len(coords_list)} timeframes.")
         for t in range(1, len(coords_list)):
             # Calculate similarity and displacement between current and previous coordinates.
             sim = path_similarity(coords_list[t-1], coords_list[t])
@@ -157,6 +160,7 @@ def flag_inconsistencies(
 
                 # if correction is enabled, try to find a more consistent path and plot the results.
                 if correct:
+                    print(f"Attempting correction for Plant {plant_idx}, t{t-1}>t{t}...")
                     predictions_new, _ = find_consistent_growth_path(
                         predictions_new,
                         filenames,
