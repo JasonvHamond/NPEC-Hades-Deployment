@@ -27,6 +27,10 @@ from skimage.util import img_as_bool
 from scipy.ndimage import convolve
 from PIL import Image
 import pillow_jxl
+import math
+import numpy
+import networkx
+import skimage.graph
 
 import matplotlib
 matplotlib.use('TkAgg')
@@ -106,7 +110,7 @@ def get_closest_cord(subset_branch: pd.DataFrame, row: pd.DataFrame) -> pd.DataF
     # Get the angle of the row
     angle = row["angle"]
     # Set the distance for the closest branches
-    threshold_distance = 45
+    threshold_distance = 75 #45
     # Calculate the distance between the source point and all the other points
     src_distance = np.sqrt(
         (subset_branch["coord-src-1"] - point_x) ** 2
@@ -199,7 +203,7 @@ def follow_lateral_path(subset_branch):
                 if steps_taken == 0:
                     # Find the closest row to the primary root
                     closest_row = get_closest_cord(subset_branch, row)
-                elif steps_taken > 10:
+                elif steps_taken > 20:
                     following_path = False
                     continue
                 else:
@@ -822,6 +826,7 @@ def build_biased_graph(
     """
     Build a graph where edge cost is based on angular deviation from vertical,
     measured over the first `head_length` pixels in the path.
+    Danna's changes are implemented here.
 
     Parameters:
         mask_full_branch: DataFrame with edge node and coordinate info.
@@ -833,113 +838,127 @@ def build_biased_graph(
         allow_reverse: Whether to allow reverse edges (dst → src).
         forbid_upward: Whether to prevent forward edges that go upward (dy < 0).
     """
-    import math
-    import numpy
-    import networkx
-    import skimage.graph
+    G = nx.DiGraph()
 
-    G = networkx.DiGraph()
+    # micro optimization with local binding
+    h, w = full_skeleton.shape
+    route = skimage.graph.route_through_array
+    hypot = math.hypot
+    atan2 = math.atan2
+    degrees = math.degrees
+    abs_ = abs
 
     for _, row in mask_full_branch.iterrows():
         src = row['node-id-src']
         dst = row['node-id-dst']
-        y_src, x_src = int(row['image-coord-src-0']), int(row['image-coord-src-1'])
-        y_dst, x_dst = int(row['image-coord-dst-0']), int(row['image-coord-dst-1'])
+        y_src = int(row['image-coord-src-0'])
+        x_src = int(row['image-coord-src-1'])
+        y_dst = int(row['image-coord-dst-0'])
+        x_dst = int(row['image-coord-dst-1'])
 
         G.add_node(src)
         G.add_node(dst)
 
         # Crop region for localized pathfinding
         y_min = max(0, min(y_src, y_dst) - crop_padding)
-        y_max = min(full_skeleton.shape[0], max(y_src, y_dst) + crop_padding)
+        y_max = min(h, max(y_src, y_dst) + crop_padding)
         x_min = max(0, min(x_src, x_dst) - crop_padding)
-        x_max = min(full_skeleton.shape[1], max(x_src, x_dst) + crop_padding)
+        x_max = min(w, max(x_src, x_dst) + crop_padding)
 
         sub_skeleton = full_skeleton[y_min:y_max, x_min:x_max]
         offset_src = (y_src - y_min, x_src - x_min)
         offset_dst = (y_dst - y_min, x_dst - x_min)
 
         try:
-            path_pixels, _ = skimage.graph.route_through_array(
+            path_pixels, _ = route(
                 1 - sub_skeleton,
                 offset_src,
                 offset_dst,
                 fully_connected=True
             )
-
-            if len(path_pixels) < 2:
-                continue
-
-            # Extract head segment for angle calculation
-            head = path_pixels[:min(head_length, len(path_pixels))]
-            if len(head) < 2:
-                continue
-
-            y_head = numpy.array([p[0] for p in head])
-            x_head = numpy.array([p[1] for p in head])
-            dy = y_head[-1] - y_head[0]
-            dx = x_head[-1] - x_head[0]
-            length = math.hypot(dx, dy)
-            if length == 0:
-                continue
-
-            # Optional: skip upward movement
-            if forbid_upward and dy < 0:
-                continue
-
-            cos_theta = numpy.clip(dy / length, -1.0, 1.0)
-            angle_rad = math.acos(cos_theta)
-            angle_deg = math.degrees(angle_rad)
-
-            cost = angle_penalty * (angle_deg / 180.0)
-
-            G.add_edge(src, dst,
-                       cost=cost,
-                       dy=dy,
-                       dx=dx,
-                       angle_deg=angle_deg,
-                       length=length)
-
-            if allow_reverse:
-                reverse_cost = cost * reverse_penalty_factor
-                G.add_edge(dst, src,
-                           cost=reverse_cost,
-                           dy=-dy,
-                           dx=-dx,
-                           angle_deg=angle_deg,
-                           length=length)
-
         except Exception:
             continue
 
-    return G
+        if len(path_pixels) < 2:
+            continue
 
-import math
+        # Extract head segment for angle calculation
+        end = head_length if head_length < len(path_pixels) else len(path_pixels)
+        if end < 2:
+            continue
+        head = path_pixels[:end]
+
+        # aviod numpy array assign
+        y0, x0 = head[0]
+        y1, x1 = head[-1]
+        dy = y1 - y0
+        dx = x1 - x0
+
+        length = hypot(dx, dy)
+        if length == 0:
+            continue
+
+        if forbid_upward and dy < 0:
+            continue
+
+        # angle: acos(dy/len) == atan2(|dx|, dy) when dy>=0
+        angle_deg = degrees(atan2(abs_(dx), dy))
+
+        cost = angle_penalty * (angle_deg / 180.0)
+
+        G.add_edge(
+            src, dst,
+            cost=cost,
+            dy=dy,
+            dx=dx,
+            angle_deg=angle_deg,
+            length=length
+        )
+
+        if allow_reverse:
+            reverse_cost = cost * reverse_penalty_factor
+            G.add_edge(
+                dst, src,
+                cost=reverse_cost,
+                dy=-dy,
+                dx=-dx,
+                angle_deg=angle_deg,
+                length=length
+            )
+
+    return G
 
 def compute_cumulative_angle_deviation(coords):
     """
     Compute the sum of angle deviations along the path segments.
     Smaller values mean straighter path.
+    Changes by Danna are implemented here.
     """
-    total_angle = 0
+    total_angle = 0.0
     for i in range(1, len(coords) - 1):
         y0, x0 = coords[i - 1]
         y1, x1 = coords[i]
         y2, x2 = coords[i + 1]
 
-        v1 = np.array([x1 - x0, y1 - y0])
-        v2 = np.array([x2 - x1, y2 - y1])
+        v1x, v1y = x1 - x0, y1 - y0
+        v2x, v2y = x2 - x1, y2 - y1
 
-        if np.linalg.norm(v1) == 0 or np.linalg.norm(v2) == 0:
+        # skip zero length
+        if (v1x == 0 and v1y == 0) or (v2x == 0 and v2y == 0):
             continue
 
-        # angle between vectors (in radians)
-        angle = math.acos(np.clip(np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2)), -1.0, 1.0))
-        total_angle += angle
+        cross = v1x * v2y - v1y * v2x
+        dot   = v1x * v2x + v1y * v2y
+
+        total_angle += math.atan2(abs(cross), dot)
 
     return total_angle
 
+
 def select_best_path(G, start_node, coord_map, min_dy_ratio=0.8, min_length=2, top_n=1):
+    """
+    Changes by Danna are implemented.
+    """
     if start_node not in G:
         return []
 
@@ -949,44 +968,62 @@ def select_best_path(G, start_node, coord_map, min_dy_ratio=0.8, min_length=2, t
         return []
 
     path_infos = []
-
+    max_dy = None
+    # Calculate dy only without building coords.
     for node, path in paths.items():
         if node == start_node or len(path) < min_length:
             continue
+        first = None
+        last = None
+        for n in path:
+            c = coord_map.get(n)
+            if c is None:
+                continue
+            if first is None:
+                first = c
+            last = c
 
-        coords = [coord_map[n] for n in path if n in coord_map]
-        if len(coords) < 2:
+        if first is None or last is None:
             continue
 
-        y0, x0 = coords[0]
-        y1, x1 = coords[-1]
-        dy = y1 - y0
-        dx = abs(x1 - x0)
+        dy = last[0] - first[0]
         if dy <= 0:
             continue
 
-        cumulative_angle = compute_cumulative_angle_deviation(coords)
+        info = {'path': path, 'dy': dy}
+        path_infos.append(info)
 
-        path_infos.append({
-            'path': path,
-            'dy': dy,
-            'angle_deviation': cumulative_angle,
-        })
+        if max_dy is None or dy > max_dy:
+            max_dy = dy
 
     if not path_infos:
         return []
 
     # Step 1: Top N longest downward paths
-    max_dy = max(p['dy'] for p in path_infos)
     dy_cutoff = max_dy * min_dy_ratio
     dy_candidates = [p for p in path_infos if p['dy'] >= dy_cutoff]
     dy_candidates.sort(key=lambda p: p['dy'], reverse=True)
     dy_candidates = dy_candidates[:top_n]
 
     # Step 2: Among them, select path with lowest total angle deviation
-    best = min(dy_candidates, key=lambda p: p['angle_deviation'])
+    best = None
+    best_angle = None
 
-    return best['path']
+    for p in dy_candidates:
+        # same as "if n in coord_map"
+        coords = [coord_map[n] for n in p['path'] if n in coord_map]
+        # previously if coords < 2 continue; here we already have dy>0, in principle >=2 but kept for safety.
+        if len(coords) < 2:
+            continue
+
+        angle = compute_cumulative_angle_deviation(coords)
+
+        if best is None or angle < best_angle:
+            best = p['path']
+            best_angle = angle
+
+    return best if best is not None else []
+
 
 def crop_skeleton_by_bbox(skeleton, bbox, scale=1.5):
     """
@@ -1291,7 +1328,6 @@ def get_lateral(branch_loc: pd.DataFrame, subset_skeleton_ob_arr: Skeleton, img:
     - Skips already assigned primary roots or assigned segments.
     - Assigns root_id as 'Lateral_X' based on counter.
     """
-
     img2 = img.copy()
     subset_branch = branch_loc.copy()
 
@@ -1302,7 +1338,6 @@ def get_lateral(branch_loc: pd.DataFrame, subset_skeleton_ob_arr: Skeleton, img:
     subset_branch = follow_lateral_path(subset_branch)
 
     # Step 2: Assign remaining unassigned segments based on bbox
-    # Extract numeric part of existing root_ids
     existing_ids = subset_branch["root_id"].dropna().astype(str)
     existing_numbers = [int(re.findall(r"\d+", rid)[0]) for rid in existing_ids if re.findall(r"\d+", rid)]
     root_id_counter = max(existing_numbers) + 1 if existing_numbers else 0
@@ -1325,9 +1360,8 @@ def get_lateral(branch_loc: pd.DataFrame, subset_skeleton_ob_arr: Skeleton, img:
                 subset_branch.at[idx, "root_type"] = "Lateral"
                 subset_branch.at[idx, "root_id"] = f"Lateral_{root_id_counter}"
                 root_id_counter += 1
-                break  # Stop after assigning to one plant
+                break
 
-    # Visualization
     colors = [(0, 128, 255), (240, 32, 160), (255, 0, 0), (255, 0, 255), (0, 255, 0)]
     img2 = draw_lateral(subset_branch, subset_skeleton_ob_arr, img2, colors)
 
@@ -1467,7 +1501,6 @@ def measure_folder(folder_dir, expected_centers) -> pd.DataFrame:
                                         description=f' Segmenting and Measuring plants for petri dish - {timeline}'):
                     if petri_dish.endswith((".png", ".jxl")):
                         path_to_masks = f"{folder_dir}/{timeline}/{petri_dish[:-4]}"
-                        print(path_to_masks)
                         # # Skip if already processed
                         # if os.path.exists(f"{path_to_masks}/measurements.xlsx"):
                         #     continue
@@ -2032,6 +2065,7 @@ def select_best_path_timeseries(G, start_node, coord_map, min_dy_ratio=0.8, targ
     else:
         return min(top, key=lambda c: c["angle_dev"])["path"]
 
+
 def get_closest(branch_df, row, threshold=45):
     """
     Get the closest branch to the given row based on proximity and angle.
@@ -2125,16 +2159,18 @@ def get_masks(branch_df, skeleton_ob, original_shape, plant_idx=None):
     """
     primary_mask = np.zeros(original_shape, dtype=np.uint8)
     lateral_mask = np.zeros(original_shape, dtype=np.uint8)
-
+    if branch_df is None or len(branch_df) == 0:
+        return primary_mask, lateral_mask
     for idx, row in branch_df.iterrows():
         if plant_idx is not None and row["plant"] != plant_idx:
             continue
         coords = skeleton_ob.path_coordinates(idx)
-        for y, x in coords:
-            if 0 <= y < original_shape[0] and 0 <= x < original_shape[1]:
-                if row["root_type"] == "Primary":
-                    primary_mask[y, x] = 1
-                elif row["root_type"] == "Lateral":
-                    lateral_mask[y, x] = 1
+        if coords is None or len(coords) == 0:
+            continue
+        if row["root_type"] == "Primary":
+            primary_mask = draw_root(coords, primary_mask, 0, 0, 255)
+        elif row["root_type"] == "Lateral":
+            lateral_mask = draw_root(coords, lateral_mask, 0, 0, 255)
 
     return primary_mask, lateral_mask
+    

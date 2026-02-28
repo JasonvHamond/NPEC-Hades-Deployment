@@ -94,6 +94,67 @@ def interpolate_path(coords_prev, coords_next, prev_weight=0.9):
     return np.column_stack([shared_y[valid], shared_x[valid]])
 
 
+def path_length(coords):
+        diffs = np.diff(coords, axis=0)
+        return float(np.sum(np.sqrt((diffs ** 2).sum(axis=1))))
+
+
+def quality_check(
+    original_coords,
+    corrected_coords, 
+    prev_coords,
+    next_coords=None,
+    min_improvement=0.1,
+    max_length_drop_ratio=0.7
+):
+    # I left this function here as I want to experiment further with it.
+    if len(original_coords) == 0:
+        return True
+    if len(corrected_coords) == 0:
+        return False
+    
+    orig_start_y = original_coords[:, 0].min()
+    corr_start_y = corrected_coords[:, 0].min()
+    prev_start_y = prev_coords[:, 0].min() if len(prev_coords) > 0 else None
+    
+    # Check for big drops in the length of the root compared to previous timeframe.
+    prev_primary_length = len(prev_coords)
+    curr_primary_length = len(corrected_coords) if len(corrected_coords) > 0 else 0
+    length_dropped = prev_primary_length - curr_primary_length > 10
+    prev_start_y = prev_coords[:, 0].min() if len(prev_coords) > 0 else None
+    curr_start_y = corrected_coords[:, 0].min() if len(corrected_coords) > 0 else None
+    # Also check if the start node is lower than previous timeframe.
+    start_dropped = (
+        prev_start_y is not None and 
+        curr_start_y is not None and 
+        curr_start_y - prev_start_y > 100
+    )
+
+    # Corrected start node should not be significantly lower than previous
+    if start_dropped:
+        print(f"Rejected: corrected start too low (prev={prev_start_y}, corr={corr_start_y})")
+        return False
+
+    # corrected path length should not be significantly shorter than previous
+    if length_dropped:
+        print(f"Rejected: corrected path too short vs previous (prev={prev_primary_length:.1f}px, corr={curr_primary_length:.1f}px)")
+        return False
+    
+    # corrected path should be more consistent with previous than original
+    # if len(prev_coords) > 20:
+    #     tree = KDTree(prev_coords)
+    #     orig_dists, _ = tree.query(original_coords)
+    #     corr_dists, _ = tree.query(corrected_coords)
+    #     orig_sim = float(np.mean(orig_dists <= 50))
+    #     corr_sim = float(np.mean(corr_dists <= 50))
+    #     # Only reject if original is substantially more similar to previous
+    #     if orig_sim > corr_sim + 0.2:
+    #         print(f"Rejected: original more consistent with previous (orig_sim={orig_sim:.2f}, corr_sim={corr_sim:.2f})")
+    #         return False
+
+    return True
+
+
 def path_to_mask(coords, shape, thickness=1):
     """
     Convert a coordinate path into binary mask of given shape and thickness.
@@ -249,6 +310,12 @@ def find_consistent_growth_path(
 
     skeleton_ob = predictions[filename_curr]["skeleton"]
     plant_branches = branch_df[branch_df["plant"] == plant_idx]
+    # Save lateral roots.
+    original_laterals = branch_df[
+        (branch_df["plant"] == plant_idx) &
+        (branch_df["root_type"] == "Lateral")
+    ].copy()
+
 
     # Measure mean distance to previous path.
     segment_scores = {}
@@ -388,6 +455,19 @@ def find_consistent_growth_path(
             # Get the new path coordinates for further comparisons and checks.
             new_path_coords = np.array([coord_map[n] for n in path if n in coord_map])
             new_start_y = new_path_coords[:, 0].min() if len(new_path_coords) > 0 else None
+
+            # has_next = t + 1 < len(coords_per_plant[plant_idx])
+            # next_coords = coords_per_plant[plant_idx][t + 1] if has_next else None
+
+            # # Quality check.
+            # if not quality_check(
+            #     original_coords=orig_primary_coords,
+            #     corrected_coords=new_path_coords,
+            #     prev_coords=prev_coords,
+            #     next_coords=next_coords
+            # ):
+            #     continue
+
             # If start node is lower than the original, recalculate new path using original start node.
             if orig_start_y is not None and new_start_y is not None and new_start_y - orig_start_y > 50:
                 print(f"Corrected path starts lower than original, recalculating from original start.")
@@ -432,6 +512,21 @@ def find_consistent_growth_path(
                 r["image-coord-dst-0"] - r["image-coord-src-0"],
                 r["image-coord-dst-1"] - r["image-coord-src-1"])), axis=1)
         branch_df = post.follow_lateral_path(branch_df)
+
+        new_primary_nodes = set(
+            branch_df[(branch_df["plant"] == plant_idx) & 
+                    (branch_df["root_type"] == "Primary")]["node-id-src"]
+        ).union(set(
+            branch_df[(branch_df["plant"] == plant_idx) & 
+                    (branch_df["root_type"] == "Primary")]["node-id-dst"]
+        ))
+
+        for idx, row in original_laterals.iterrows():
+            if (row["node-id-src"] not in new_primary_nodes and
+                    row["node-id-dst"] not in new_primary_nodes):
+                branch_df.at[idx, "root_type"] = "Lateral"
+                branch_df.at[idx, "plant"] = plant_idx
+                branch_df.at[idx, "root_id"] = row["root_id"]
 
 
         # Update masks and predictions.

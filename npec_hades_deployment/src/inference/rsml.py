@@ -57,7 +57,6 @@ def create_plant(plant_id: int, all_coordinates: pd.DataFrame) -> str:
 
     unique_lateral_roots = all_coordinates.loc[all_coordinates['type'].str.contains('Lateral', na=False), 'type'].unique()
 
-    print(len(unique_lateral_roots))
     for idx, el in enumerate(unique_lateral_roots):
         lateral_root_coordinates = all_coordinates.loc[all_coordinates['type'] == el]
         plant_structure += generate_lroot(id=idx + 1, label=ROOT_LABEL, x=lateral_root_coordinates['x'].values,

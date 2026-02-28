@@ -17,6 +17,7 @@ import cv2
 from PIL import Image
 import pillow_jxl
 import numpy as np
+import time
 # Set the environment variable before importing TensorFlow
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
@@ -102,6 +103,7 @@ def main():
 
     :param input_path: Path to the input image.
     """
+    start_time = time.time()
     ### TEST, REMOVE WHEN DEPLOYED AND REPLACE BY CONFIG ###
     input_accept = False
 
@@ -234,7 +236,11 @@ def main():
     #         inoculation_process(landmarks_file, petri_dish)
     print("----")
     print("[green]Phenotyping and Inoculation Completed Successfully![/green]")
-
+    elapsed = time.time() - start_time
+    hours = int(elapsed // 3600)
+    minutes = int((elapsed % 3600) // 60)
+    seconds = int(elapsed % 60)
+    print(f"[bold cyan]Total runtime: {hours:02d}:{minutes:02d}:{seconds:02d}[/bold cyan]")
 
 
 if __name__ == "__main__":

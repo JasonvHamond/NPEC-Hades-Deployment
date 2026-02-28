@@ -102,12 +102,6 @@ def predict_timeseries(folder_path: str, output_path: str, patch_size: int, root
             results[filename]["roots"] = root_mask
             results[filename]["shoots"] = shoot_mask
 
-            # Segment and select primary/lateral roots.
-            # branch_df, skeleton_ob, plant_bboxes = post.segment_roots(
-            #     root_mask, expected_centers,
-            #     reconnect_max_dist=40.0,
-            #     known_start_coords=start_coords_per_plant if t >= MIN_RELIABLE_T else None
-            # )
             primary_result = post.segmentation_primary(root_mask_path, expected_centers=expected_centers)
 
 
@@ -121,12 +115,6 @@ def predict_timeseries(folder_path: str, output_path: str, patch_size: int, root
                         (branch_df["root_type"] == "Primary")
                     ]
                     if not primary.empty:
-                        # Store the topmost primary coord as the known start
-                        # top_row = primary.loc[primary["image-coord-src-0"].idxmin()]
-                        # start_coords_per_plant[plant_idx] = (
-                        #     top_row["image-coord-src-0"],
-                        #     top_row["image-coord-src-1"]
-                        # )
                         top_row = primary.loc[primary["image-coord-src-0"].idxmin()]
                         new_coord = (
                             top_row["image-coord-src-0"],
@@ -169,16 +157,6 @@ def predict_timeseries(folder_path: str, output_path: str, patch_size: int, root
                 "lateral": None, "primary": None,
                 "bboxes": None, "branches": None, "skeleton": None
             })
-
-        # except Exception as e:
-        #     print(f"Failed to predict for {filename}: {e}")
-        #     results[filename]["roots"] = None
-        #     results[filename]["shoots"] = None
-        #     results[filename]["lateral"] = None
-        #     results[filename]["primary"] = None
-        #     results[filename]["bboxes"] = None
-        #     results[filename]["branches"] = None
-        #     results[filename]["skeleton"] = None
     return results
 
 def create_coords_per_plant(predictions):
@@ -188,7 +166,10 @@ def create_coords_per_plant(predictions):
         branch_df = data["branches"]
         skeleton_ob = data["skeleton"]
         for idx in range(5):
-            coords = get_primary_coords(branch_df, skeleton_ob, plant_idx=idx)
-            coords_per_plant[idx].append(coords)
+            if branch_df is None or skeleton_ob is None:
+                coords_per_plant[idx].append(np.empty((0, 2)))
+            else:
+                coords = get_primary_coords(branch_df, skeleton_ob, plant_idx=idx)
+                coords_per_plant[idx].append(coords)
     return coords_per_plant
 
